@@ -7,10 +7,15 @@ To monitor admin (sudo) access on a Kali Linux system, I:
 3. Wrote a Python script that:
    - Checks for sudo events using `journalctl` every 30 seconds.
    - Logs each sudo usage attempt (success/failure) to a custom file with user and timestamp.
+ 
+## Keyword
+1. cd
+2. cs
+3. chmod +x sudo_monitor.py
+4. sudo ./sudo_monitor.py
 
 ## Screenshot
 <img width="429" height="552" alt="Screenshot 2025-07-31 133324" src="https://github.com/user-attachments/assets/3a32894b-5aac-4ef9-89e7-eb8b11bbb09b" />
-
 
 ## Findings
 - System uses `journalctl` instead of traditional log files.
@@ -30,39 +35,42 @@ Jul 31 11:05:10 | USER: kali | STATUS: FAILURE
 ## Python Script: `sudo_monitor.py`
 ```python
 #!/usr/bin/env python3
-import subprocess, time, re
+import subprocess
+import re
 
-CHECK_INTERVAL = 30
-OUTPUT_LOG = "/home/kali/Documents/sudo_monitor.log"
-already_seen = set()
+def monitor_sudo_journal():
+    print("🔍 Monitoring sudo usage via journalctl... (Ctrl+C to stop)")
 
-def extract_info(line):
-    timestamp_match = re.match(r'^\w{3} \d{1,2} \d{2}:\d{2}:\d{2}', line)
-    user_match = re.search(r'by\s+(\w+)\(uid=0\)', line)
-    status = "SUCCESS" if "session opened" in line else "FAILURE" if "authentication failure" in line else "UNKNOWN"
-    timestamp = timestamp_match.group(0) if timestamp_match else "UNKNOWN_TIME"
-    user = user_match.group(1) if user_match else "UNKNOWN_USER"
-    return f"{timestamp} | USER: {user} | STATUS: {status}"
+    proc = subprocess.Popen(
+        ["journalctl", "-f", "_COMM=sudo", "-o", "short"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
 
-def monitor():
-    print(f"[+] Monitoring started (journalctl mode)")
-    while True:
-        try:
-            result = subprocess.run(
-                ["journalctl", "-n", "20", "_COMM=sudo", "--no-pager"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-            )
-            lines = result.stdout.strip().split("\n")
-            with open(OUTPUT_LOG, "a") as out:
-                for line in lines:
-                    if "sudo" in line and line not in already_seen:
-                        already_seen.add(line)
-                        parsed = extract_info(line)
-                        print("[LOG]", parsed)
-                        out.write(parsed + "\n")
-        except Exception as e:
-            print("[-] Error:", e)
-        time.sleep(CHECK_INTERVAL)
+    try:
+        for line in proc.stdout:
+            line = line.strip()
+            # Extract timestamp (first 15 chars)
+            timestamp = line[:15]
+
+            # Find user in line
+            user_match = re.search(r'user=(\w+)', line)
+            user = user_match.group(1) if user_match else "UNKNOWN"
+
+            if "COMMAND=" in line:
+                status = "SUCCESS"
+            elif "authentication failure" in line.lower():
+                status = "FAILURE"
+            else:
+                continue  # skip unrelated lines
+
+            print(f"{timestamp} | USER: {user} | STATUS: {status}")
+
+    except KeyboardInterrupt:
+        print("\n🛑 Stopped monitoring.")
+        proc.terminate()
 
 if __name__ == "__main__":
-    monitor()
+    monitor_sudo_journal()
